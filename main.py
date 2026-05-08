@@ -1,4 +1,4 @@
-from my_tetris.src.tetris.game import Game
+from src.tetris.game import Game
 
 
 if __name__ == '__main__':
