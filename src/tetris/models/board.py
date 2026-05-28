@@ -1,8 +1,17 @@
 """
-TODO: написать докстринг для этого гениального модуля
+Модуль, отвечающий за игровую доску.
+
+Описание зоны ответственности модуля:
+Все действия, связанные с взаимодействием с доской. Проверка координат,
+валидация, размещение, очистка, удаление линий.
+
+Игровая доска НЕ ОТВЕЧАЕТ за рендеринг тетромино, вычисление позиции тетромино,
+поворот тетромино и прочие действия. Только ИГРОВОЕ ПОЛЕ.
 """
+# NOTE: координатный отсчет доски считается сверху слева.
+
 from src.tetris.config import BOARD_HEIGHT, BOARD_WIDTH
-from src.tetris.models.tetromino import TetrominoType
+from src.tetris.models.tetromino import TetrominoType, Tetromino
 
 
 type CellValue = TetrominoType | None
@@ -10,21 +19,24 @@ type BoardLine = list[CellValue]
 type BoardGrid = list[BoardLine]
 
 
-# TODO: на момент написания этого модуля нет класса Tetromino и он не
-# импортирован. Это критично для аннотации. После завершения класса Tetromino
-# нужно исправить это.
-
-
 class Board:
     """Главное поле игры, в котором падают тетромино."""
+
     def __init__(
             self,
             width: int = BOARD_WIDTH,
             height: int = BOARD_HEIGHT
             ) -> None:
-        self.width = width
-        self.height = height
-        self.grid = self._create_grid()
+        """
+        Метод, создающий игровую доску указанного размера.
+
+        Args:
+            width (int): ширина доски в клетках.
+            height (int): высота доски в клетках.
+        """
+        self.width: int = width
+        self.height: int = height
+        self.grid: BoardGrid = self._create_grid()
 
     def is_inside(self, x: int, y: int) -> bool:
         """
@@ -60,18 +72,29 @@ class Board:
             raise IndexError("Ячейка находится за пределами доски.")
         return self.grid[y][x]
 
-    def clear_full_lines(self) -> None:
+    def clear_full_lines(self) -> int:
         """
         Метод, очищающий заполненные линии поля и сдвигающий максимально вниз
         все верхние непустые линии.
+
+        Returns:
+            int: количество очищенных линий.
         """
-        for y, line in enumerate(self.grid):
-            if self._line_is_full(line):
-                self.grid.pop(y)  # Обычное удаление.
-                # После удаления верхние линии надо сдвинуть вниз. С pop это
-                # произошло само, но в самом верху теперь строки не хватает.
-                # Исправляю с помощью вставки новой.
-                self.grid.insert(0, [None for _ in range(self.width)])
+        remaining_lines: BoardGrid = [
+            line for line in self.grid if not self._line_is_full(line)
+        ]
+        cleared_lines_count = self.height - len(remaining_lines)
+
+        if cleared_lines_count == 0:
+            return 0
+
+        empty_lines: BoardGrid = [
+            [None for _ in range(self.width)]
+            for _ in range(cleared_lines_count)
+        ]
+        self.grid = empty_lines + remaining_lines
+
+        return cleared_lines_count
 
     def cell_is_empty(self, x: int, y: int) -> bool:
         """
@@ -85,8 +108,8 @@ class Board:
             bool: True, если ячейка пустая, False в противном случае.
 
         Raises:
-            IndexError: возникает, если запрошенная ячейка за пределами
-                игрового поля.
+            IndexError: выбрасывается, если запрошенная ячейка находится за
+                пределами игрового поля.
 
         """
         if not self.is_inside(x, y):
@@ -100,7 +123,7 @@ class Board:
         Args:
             x (int): координата X.
             y (int): координата Y.
-            tetromino_type (TetrominoType): тип фигурки.
+            tetromino_type (TetrominoType): тип фигурки тетромино.
 
         Raises:
             IndexError: выбрасывается, если была попытка поставить тетромино за
@@ -110,14 +133,14 @@ class Board:
             raise IndexError("Ячейка находится за пределами доски.")
         self.grid[y][x] = tetromino_type
 
-    def can_place(self, tetromino, x: int, y: int) -> bool:
+    def can_place(self, tetromino: Tetromino, x: int, y: int) -> bool:
         """
         Метод, проверяющий, можно ли разместить тетромино в указанной позиции.
 
         Args:
             x (int): координата X.
             y (int): координата Y.
-            tetromino: тетромино, которое нужно разместить.
+            tetromino (Tetromino): тетромино, которое нужно разместить.
 
         Returns:
             bool: True, если разместить можно, False в противном случае.
@@ -130,12 +153,12 @@ class Board:
                 return False
         return True
 
-    def put_tetromino(self, tetromino) -> None:
+    def put_tetromino(self, tetromino: Tetromino) -> None:
         """
         Метод, устанавливающий в определённую ячейку значения тетромино.
 
         Args:
-            tetromino: тетромино, которое нужно разместить.
+            tetromino (Tetromino): тетромино, которое нужно разместить.
 
         Raises:
             ValueError: если была попытка разместить тетромино в недопустимое
@@ -147,18 +170,37 @@ class Board:
         for x, y in tetromino.get_cells():
             self.fill_cell(x, y, tetromino.type)
 
-    # NOTE: метод возможно придется удалить.
-    def clear_cell(self, x: int, y: int) -> None:
+    def apply_sand_gravity_step(
+            self,
+            blocked_cells: set[tuple[int, int]] | None = None
+            ) -> bool:
         """
-        Метод, очищающий ячейку до пустого состояния.
+        Метод, заставляющий заполненные (чем?, ох уж эти несклоняемые слова)
+        тетромино ячейки падать как песок на ОДИН шаг.
 
         Args:
-            x (int): координата X.
-            y (int): координата Y.
+            blocked_cells (set[tuple[int, int]] | None): клетки, в которые
+                нельзя сдвигать блоки.
+
+        Returns:
+            bool: True, если хотя бы одна клетка была сдвинута вниз, False в
+                противном случае.
         """
-        if not self.is_inside(x, y):
-            raise IndexError("Ячейка находится за пределами доски.")
-        self.grid[y][x] = None
+        blocked_cells = blocked_cells or set()
+        moved = False
+
+        for y in range(self.height - 2, -1, -1):
+            for x in range(self.width):
+                if (
+                    self.grid[y][x] is not None
+                    and self.grid[y + 1][x] is None
+                    and (x, y + 1) not in blocked_cells
+                ):
+                    self.grid[y + 1][x] = self.grid[y][x]
+                    self.grid[y][x] = None
+                    moved = True
+
+        return moved
 
     def reset(self) -> None:
         """
@@ -173,7 +215,11 @@ class Board:
         Returns:
             BoardGrid: сетка игрового поля.
         """
-        return [[None for _ in range(self.width)] for _ in range(self.height)]
+        grid: BoardGrid = [
+            [None for _ in range(self.width)]
+            for _ in range(self.height)
+        ]
+        return grid
 
     def _line_is_full(self, line: BoardLine) -> bool:
         """
